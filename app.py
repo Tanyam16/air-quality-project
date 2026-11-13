@@ -276,6 +276,10 @@ def flow_strip(active):
         f'<div class="box{" on" if i in active else ""}"><b>{t}</b>{d}</div>' for i, (t, d) in enumerate(boxes)) + '</div>'
 
 
+def points(*items):
+    st.markdown('\n'.join(f'- {i}' for i in items))
+
+
 with tab_how:
     st.header('How it works')
     a_, b_, c_ = st.columns(3, gap='large')
@@ -308,11 +312,21 @@ with tab_how:
         t1, t2, t3, t4, t5, t6 = st.tabs(['Data', 'Inputs', 'Split', 'Model', 'Uncertainty', 'Result'])
 
         with t1:
-            st.markdown('**What we did.** Joined Delhi\'s daily pollution (CPCB, via Kaggle) with daily weather (Open-Meteo). '
-                        'The weather is a model reconstruction, not a ground-station reading.')
-            st.markdown('**Cleaning.** Gaps of 3 days or fewer were filled with a straight line. PM2.5 and NO2 had only 2 blank days each. '
-                        'PM10 keeps two long gaps (7 days in Dec 2015, 58 days in Jul to Aug 2017), left blank rather than invented. '
-                        'The extreme smog days were kept, because they are the days that matter.')
+            points('Joined Delhi\'s daily pollution (CPCB, via Kaggle) with daily weather (Open-Meteo).',
+                   'The weather is a model reconstruction, not a ground-station reading.')
+            st.markdown('**What we checked**')
+            st.dataframe(pd.DataFrame({
+                'Check': ['Repeated dates', 'Skipped calendar days', 'Negative values', 'Blank values',
+                          'PM2.5 higher than PM10', 'Extreme values'],
+                'Why it matters': ['A repeated day would be counted twice', 'Windows need consecutive days',
+                                   'Concentrations cannot be negative', 'Gaps break the 3-day windows',
+                                   'PM2.5 is part of PM10, so this should not happen', 'Could be sensor errors'],
+                'Result': ['0', '0', '0', 'PM2.5 0.1%, NO2 0.1%, PM10 3.8%, AQI category 0.5%',
+                           '16 days (about 0.8%)', 'PM2.5 up to 685 on real smog days']}),
+                hide_index=True, width='stretch')
+            st.markdown('**Cleaning**')
+            points('Short gaps (3 days or fewer) were filled with a straight line. The two long PM10 gaps (7 and 58 days) were left blank.',
+                   'Extreme smog days were kept, because they are the days that matter.')
             raw = load_raw()
             view = st.radio('Explore the data', ['Average PM2.5 by month', 'Average PM2.5 by year', 'Days in each risk class'],
                             horizontal=True, key='how_explore')
@@ -320,51 +334,57 @@ with tab_how:
                 mon = raw['pm25'].groupby(raw.index.month).mean().round(0)
                 mon.index = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
                 st.bar_chart(mon.rename('PM2.5, µg/m³'), sort=False, height=260)
-                st.caption('Winter is far worse: November is the peak (about 238), July and August are the cleanest (about 45). '
-                           'This is why the month is a model input.')
+                points('Winter is far worse: November peaks at about 238, July and August are the cleanest at about 45.',
+                       'This is why the month is a model input.')
             elif view == 'Average PM2.5 by year':
                 yr = raw['pm25'].groupby(raw.index.year).mean().round(0)
                 yr.index = yr.index.astype(str)
                 st.bar_chart(yr.rename('PM2.5, µg/m³'), sort=False, height=260)
-                st.caption('2020 is lower: partly the COVID lockdown, and partly because the data stops in July, before the smog season.')
+                points('2020 is lower, partly because of the COVID lockdown.',
+                       'The data also stops in July, before the smog season.')
             else:
                 cls = raw['risk'].value_counts().sort_index()
                 cls.index = ['Low', 'Moderate', 'Severe']
                 st.bar_chart(cls.rename('Days'), sort=False, height=260)
-                st.caption('Low days are rare in Delhi (about 9%) and Severe days are common (about 38%).')
-            st.markdown('**Why it matters.** Yesterday\'s PM2.5 already predicts today\'s with a correlation of 0.87, '
-                        'so "tomorrow equals today" is a strong baseline that the networks have to beat.')
+                points('Low days are rare in Delhi (about 9%).', 'Severe days are common (about 38%).')
+            points('Yesterday\'s PM2.5 predicts today\'s with a correlation of 0.87.',
+                   'So "tomorrow equals today" is a strong baseline that the networks have to beat.')
 
         with t2:
-            st.markdown('**What we did.** Turned the data into rows a network can learn from. Each row says: '
-                        '"here is what the last 3 days looked like, so what happened tomorrow?"')
+            points('Each row says: "here is what the last 3 days looked like, so what happened tomorrow?"')
             st.dataframe(pd.DataFrame({'Part': ['Last 3 days of readings', 'Month of the year', 'Total inputs', 'Answers the model learns'],
                                        'Numbers': [18, 2, 20, 2],
                                        'Detail': ['Two days ago, yesterday and today: PM2.5, PM10, NO2, temperature, humidity, wind',
                                                   'The month as a sine and a cosine value',
                                                   '', 'Tomorrow\'s PM2.5 and tomorrow\'s PM10']}),
                          hide_index=True, width='stretch')
-            st.caption('The month is two numbers so that December and January sit side by side instead of looking 11 months apart. '
-                       'Result: 1,935 rows. 71 windows were lost to the PM10 gaps (about 3.5%).')
+            points('The month is two numbers so that December and January sit side by side, not 11 months apart.',
+                   'Result: 1,935 rows. 71 windows were lost to the PM10 gaps (about 3.5%).')
 
         with t3:
-            st.markdown('**What we did.** Split the days by time, not randomly, so the model is always tested on days after the ones it learned from. '
-                        'A random split would put 5 November in training and 4 and 6 November in the test, which leaks the answer.')
+            points('The days are split by time, not randomly, so the model is always tested on days after the ones it learned from.',
+                   'A random split would put 5 November in training and 4 and 6 November in the test, which leaks the answer.')
             st.markdown('<div class="timeline"><div style="width:60%;background:#2B4C63">Training, 1,161 days</div>'
                         '<div style="width:20%;background:#2E8B7F">Validation, 387</div>'
                         '<div style="width:20%;background:#B07D1B">Test, 387<span class="lock" style="left:74.4%"></span></div></div>'
                         '<div class="tl-labels"><div style="width:60%">4 Jan 2015 to 19 May 2018</div>'
                         '<div style="width:20%">20 May 2018 to 10 Jun 2019</div><div style="width:20%">11 Jun 2019 to 1 Jul 2020</div></div>',
                         unsafe_allow_html=True)
-            st.caption('The white line in the test block is 25 March 2020, when the lockdown began: 288 test days before it and 99 during it. '
-                       'The test days are used once, at the end. Each period contains a full winter, so every stage is judged on the hard season.')
-            st.markdown('**Scaling.** Inputs were put on a similar range (PM10 is in the hundreds, wind in single digits). '
-                        'The scalers were fitted on the training days only, so nothing from later days leaks in.')
+            points('The white line in the test block is 25 March 2020, when the lockdown began: 288 test days before it and 99 during it.',
+                   'The test days are used once, at the end.',
+                   'Each period contains a full winter, so every stage is judged on the hard season.')
+            st.markdown('**Scaling**')
+            points('Inputs were put on a similar range (PM10 is in the hundreds, wind in single digits).',
+                   'The scalers were fitted on the training days only, so nothing from later days leaks in.')
 
         with t4:
-            st.markdown('**What we did.** Trained a small neural network (an MLP) and tuned its size and a penalty against memorising '
-                        '(alpha) on the validation days. Lower error is better. Reference points: linear regression 22.2, '
-                        '"tomorrow = today" 25.2.')
+            st.markdown('**1. The numbers to beat**')
+            points('Two simple methods were measured first (validation period, error in µg/m³, lower is better).')
+            st.markdown("| Method | PM2.5 error | PM10 error | PM2.5 R² | Winter PM2.5 error |\n|---|---|---|---|---|\n"
+                        "| 'Tomorrow = today' | 25.2 | 46.5 | 0.72 | 49.7 |\n"
+                        "| Linear regression (straight-line formula) | 22.2 | 40.0 | 0.80 | 41.5 |")
+            st.markdown('**2. Tuning the network**')
+            points('We tried different network sizes and a penalty against memorising (alpha) on the validation days.')
             tune = pd.DataFrame([
                 ('32 neurons, alpha 3.0', 22.8), ('16 neurons, alpha 1.0 (chosen)', 22.9), ('16 neurons, alpha 3.0', 23.0),
                 ('16 neurons, alpha 0.001', 23.4), ('16 neurons, alpha 0.1', 23.4), ('8 neurons, any alpha', 23.5),
@@ -374,15 +394,26 @@ with tab_how:
             st.dataframe(tune, hide_index=True, width='stretch',
                          column_config={'PM2.5 error': st.column_config.ProgressColumn(
                              'PM2.5 error (lower is better)', format='%.1f', min_value=20, max_value=27)})
-            st.caption('The first network we tried (two layers of 32 and 16) scored 25.3, no better than "tomorrow = today". '
-                       'It had about as many weights as training rows, so it memorised the training days. '
-                       'Smaller networks with more regularisation did better. We chose 16 neurons, one layer, alpha 1.0. '
-                       'The 32-neuron setting is a tie within the noise, so the smaller network won, and we stopped tuning there.')
+            points('The first network (two layers of 32 and 16) scored 25.3, no better than "tomorrow = today".',
+                   'It had about as many weights as training rows, so it memorised the training days.',
+                   'Smaller networks with more regularisation did better.',
+                   'Chosen: 16 neurons, one layer, alpha 1.0. The 32-neuron setting ties within the noise, so the smaller one won.',
+                   'We stopped tuning there, because more would be chasing noise.')
+            st.markdown('**3. The final model against the other methods**')
+            points('The final model is the average of 5 copies of the chosen network.')
+            st.markdown("| Method | PM2.5 error | PM10 error | PM2.5 RMSE | PM2.5 R² | Winter PM2.5 error |\n|---|---|---|---|---|---|\n"
+                        "| 'Tomorrow = today' | 25.2 | 46.5 | 41.4 | 0.72 | 49.7 |\n"
+                        "| Linear regression | 22.2 | 40.0 | 35.4 | 0.80 | 41.5 |\n"
+                        "| First network (untuned) | 25.3 | 45.7 | 38.0 | 0.77 | 41.6 |\n"
+                        "| **5-network average (final model)** | **22.3** | **41.7** | **35.1** | **0.80** | **40.0** |")
+            points('The final model ties linear regression on PM2.5 (22.3 vs 22.2) and has the best winter error (40.0).',
+                   'It is slightly worse for PM10 (41.7 vs 40.0).',
+                   'Both beat "tomorrow = today".')
 
         with t5:
-            st.markdown('**What we did.** One network gives one forecast and no sense of how reliable it is. '
-                        'So we trained 5 copies from different random starts. The average is the forecast, '
-                        'and how much they disagree is the uncertainty.')
+            points('One network gives one forecast and no sense of how reliable it is.',
+                   'So we trained 5 copies from different random starts.',
+                   'The average is the forecast. How much they disagree is the uncertainty.')
             case = st.radio('Try an example (illustrative numbers)', ['The networks agree', 'The networks disagree'],
                             horizontal=True, key='how_unc')
             vals = np.array([240, 245, 238, 250, 242]) if case == 'The networks agree' else np.array([180, 260, 210, 300, 150])
@@ -390,20 +421,20 @@ with tab_how:
             u1.metric('Forecast (average of the 5)', f'{vals.mean():.0f}')
             u2.metric('Uncertainty (spread)', f'±{vals.std():.1f}')
             st.bar_chart(pd.DataFrame({'PM2.5 forecast': vals}, index=[f'Network {i}' for i in range(1, 6)]), height=220)
-            st.caption('On real validation days, when the networks agreed the forecast was off by 17.2 on average, '
-                       'and when they disagreed it was off by 27.4, about 59% more. So the spread is a real warning, '
-                       'but a modest one: the networks also disagree more on dirty days, so part of it just means "pollution is high".')
+            points('On real validation days, when the networks agreed the forecast was off by 17.2 on average.',
+                   'When they disagreed it was off by 27.4, about 59% more.',
+                   'So the spread is a real warning, but a modest one: the networks also disagree more on dirty days.')
 
         with t6:
-            st.markdown('**What we did.** Scored the three methods once on the test days, with all settings already fixed. '
-                        'PM2.5 error, lower is better.')
+            points('The three methods were scored once on the test days, with all settings already fixed.',
+                   'PM2.5 error, lower is better.')
             st.dataframe(pd.DataFrame({
                 'Test period': ['Before the lockdown (288 days)', 'All 387 test days', 'Worst 10% of days'],
                 'Tomorrow = today': [27.8, 23.8, 64.0], 'Linear regression': [26.2, 22.9, 62.1], '5-network ensemble': [26.7, 24.8, 60.2]}),
                 hide_index=True, width='stretch')
-            st.caption('Before the lockdown the ensemble is about 4% better than "tomorrow = today" and about 2% behind linear regression. '
-                       'On the worst 10% of days it is the best of the three, and those are the days that matter most. '
-                       'During the lockdown it is clearly worse: the networks had never seen air that clean and over-predicted.')
+            points('Before the lockdown, the ensemble is about 4% better than "tomorrow = today" and about 2% behind linear regression.',
+                   'On the worst 10% of days it is the best of the three, and those days matter most.',
+                   'During the lockdown it is clearly worse: the networks had never seen air that clean and over-predicted.')
 
     # ------------------------------------------------------------------ stage 2
     elif stage.startswith('2'):
@@ -414,15 +445,15 @@ with tab_how:
         f1, f2, f3 = st.tabs(['1. Fuzzify', '2. The 16 rules', '3. From rules to a score'])
 
         with f1:
-            st.markdown('**Idea.** A hard cutoff says 109 is "not high" and 111 is "high". Fuzzy sets let a value be partly in two groups at once. '
-                        'Low and High use a trapezoid (a flat top of full membership), and Medium uses a triangle (one peak at 1).')
+            points('A hard cutoff calls 109 "not high" and 111 "high". Fuzzy sets let a value be partly in two groups at once.',
+                   'Low and High use a trapezoid (a flat top of full membership). Medium uses a triangle (one peak at 1).')
             val = st.slider('Try a forecast PM2.5 value (µg/m³)', 0, 400, 130, key='how_slider')
             deg = {lab: float(_mf(k, p, np.array([val]))[0]) for lab, (k, p) in fz.variables['pm25'].items()}
             d1, d2, d3 = st.columns(3)
             d1.metric('Low', f'{deg["low"]:.2f}')
             d2.metric('Medium', f'{deg["medium"]:.2f}')
             d3.metric('High', f'{deg["high"]:.2f}')
-            st.caption('At 130, the air is a little bit Medium and a fair bit High at the same time. Slide it and watch the shares change.')
+            points('Slide the value and watch the three shares change.')
             st.dataframe(pd.DataFrame({
                 'Input': ['PM2.5', 'PM10'], 'Low': ['Full up to 40, zero at 70', 'Full up to 70, zero at 110'],
                 'Medium (start, peak, end)': ['50, 90, 140', '90, 180, 280'],
@@ -444,12 +475,12 @@ with tab_how:
                 curve = pd.DataFrame({lab: _mf(k, p, xs_) for lab, (k, p) in fz.variables[var].items()}, index=np.round(xs_, 1))
                 curve.index.name = NAMES[var]
             st.line_chart(curve, height=260)
-            st.caption('Uncertainty, wind and humidity cutoffs were set from the spread of the forecast days used to design the rules '
-                       '(low and high at the 40th and 60th percentiles for uncertainty, and quartiles for wind and humidity).')
+            points('Uncertainty, wind and humidity cutoffs come from the forecast days used to design the rules '
+                   '(uncertainty at the 40th and 60th percentiles, wind and humidity at quartiles).')
 
         with f2:
-            st.markdown('**What we did.** Wrote 16 IF-THEN rules by hand from domain knowledge: 7 for Severe, 7 for Moderate and 2 for Low. '
-                        'If no rule fires, the system falls back to Moderate.')
+            points('16 IF-THEN rules written by hand from domain knowledge: 7 for Severe, 7 for Moderate and 2 for Low.',
+                   'If no rule fires, the system falls back to Moderate.')
             order = {2: 'Severe', 1: 'Moderate', 0: 'Low'}
             rows_ = []
             for n, (a1, c1) in enumerate(HAND_RULES, 1):
@@ -462,8 +493,8 @@ with tab_how:
                         '- High forecast uncertainty: the system takes a cautious line instead of confidently declaring Low.')
 
         with f3:
-            st.markdown('**What we did.** The live demo uses Mamdani inference with centroid defuzzification. '
-                        'It turns the rules that fired into one risk score from 0 to 100.')
+            points('The live demo uses Mamdani inference with centroid defuzzification.',
+                   'It turns the rules that fired into one risk score from 0 to 100.')
             stages_ = [('1. Fuzzify', 'Convert inputs into membership degrees'), ('2. Rule evaluation', 'Rule strength is its weakest condition (MIN)'),
                        ('3. Aggregation', 'Combine the activated output shapes using MAX'), ('4. Defuzzify', 'Take the centroid to get one risk score')]
             st.markdown('<div class="flow">' + ''.join(f'<div class="box on"><b>{t}</b>{d}</div>' for t, d in stages_) + '</div>',
