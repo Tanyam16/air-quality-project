@@ -187,7 +187,7 @@ with tab_demo:
         else:
             today = pd.Timestamp(st.date_input('Today is', value=pd.Timestamp('2019-12-01').date(),
                                                min_value=pd.Timestamp('2015-01-01').date(),
-                                               max_value=pd.Timestamp('2023-12-31').date(),
+                                               max_value=pd.Timestamp('2030-12-31').date(),
                                                help='The model only uses the month of this date, to account for the smog season.'))
         match = W[W.today == today]
         if len(match):
