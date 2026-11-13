@@ -12,7 +12,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from fuzzy_engine import FuzzySystem, CLASS_NAMES, _mf
+import altair as alt
+
+from fuzzy_engine import FuzzySystem, CLASS_NAMES, OUT_SETS, SCORE_CUTS, _mf
 
 HERE = Path(__file__).parent
 FEATURES = ['pm25', 'pm10', 'no2', 'temp', 'humidity', 'wind']
@@ -460,23 +462,83 @@ with tab_how:
                         '- High forecast uncertainty: the system takes a cautious line instead of confidently declaring Low.')
 
         with f3:
-            st.markdown('**What we did.** Each rule fires to a degree between 0 and 1, using the weakest of its conditions (MIN). '
-                        'There are two ways to read the result:')
-            st.markdown('- **The class** comes from the strongest vote among the rules that fired.\n'
-                        '- **The 0 to 100 risk score** comes from Mamdani inference with a centroid, below.')
-            st.dataframe(pd.DataFrame({
-                'Stage': ['1. Fuzzify', '2. Rule evaluation', '3. Aggregation', '4. Defuzzify'],
-                'Operation': ['Turn each input into membership degrees', 'Rule strength is the minimum of its conditions (MIN)',
-                              'Combine the activated output shapes using MAX', 'Take the centroid to get one risk score']}),
-                hide_index=True, width='stretch')
+            st.markdown('**What we did.** The live demo uses Mamdani inference with centroid defuzzification. '
+                        'It turns the rules that fired into one risk score from 0 to 100.')
+            stages_ = [('1. Fuzzify', 'Convert inputs into membership degrees'), ('2. Rule evaluation', 'Rule strength is its weakest condition (MIN)'),
+                       ('3. Aggregation', 'Combine the activated output shapes using MAX'), ('4. Defuzzify', 'Take the centroid to get one risk score')]
+            st.markdown('<div class="flow">' + ''.join(f'<div class="box on"><b>{t}</b>{d}</div>' for t, d in stages_) + '</div>',
+                        unsafe_allow_html=True)
+
+            st.markdown('**Try it: set a day and watch the four stages**')
+            g1, g2, g3 = st.columns(3)
+            x25 = g1.slider('Forecast PM2.5', 0, 400, 130, key='mm_pm25')
+            x10 = g2.slider('Forecast PM10', 0, 600, 200, key='mm_pm10')
+            xu = g3.slider('Forecast spread', 0.0, 25.0, 6.0, 0.5, key='mm_unc')
+            g4, g5, g6 = st.columns(3)
+            xw = g4.slider('Wind (km/h)', 0.0, 20.0, 8.0, 0.5, key='mm_wind')
+            xh = g5.slider('Humidity (%)', 0, 100, 60, key='mm_hum')
+            MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+            xm = g6.selectbox('Month', list(range(1, 13)), index=11, format_func=lambda m: MON[m - 1], key='mm_month')
+
+            dd = {'pm25': [x25], 'pm10': [x10], 'unc': [xu], 'wind': [xw], 'humidity': [xh], 'season': [xm]}
+            F = fz.firing(fz.fuzzify(dd))[0]                       # stages 1 and 2
+            S = np.zeros(3)
+            for j, (_, c1) in enumerate(fz.rules):
+                S[c1] = max(S[c1], F[j])
             z = np.linspace(0, 100, 201)
-            outc = pd.DataFrame({'Low': np.interp(z, [0, 15, 40], [1, 1, 0], right=0),
-                                 'Moderate': np.interp(z, [25, 50, 75], [0, 1, 0], left=0, right=0),
-                                 'Severe': np.interp(z, [60, 85, 100], [0, 1, 1], left=0)}, index=z)
-            outc.index.name = 'risk score'
-            st.line_chart(outc, height=220)
-            st.caption('The centroid is the balance point of the combined shape. Score bands: 0 to 35 Low, 35 to 65 Moderate, above 65 Severe. '
-                       'Near a boundary, the class from the votes and the band of the score can differ by one step.')
+            sets_ = {c1: _mf(k, p, z) for c1, (k, p) in OUT_SETS.items()}
+            clip = {c1: np.minimum(S[c1], sets_[c1]) for c1 in range(3)}
+            agg = np.maximum.reduce(list(clip.values()))           # stage 3
+            score_ = float(fz.mamdani_score(dd)[0])                # stage 4
+            band_ = int(fz.score_to_class(score_))
+
+            lc, rc = st.columns([5, 6], gap='large')
+            with lc:
+                st.markdown('**Stage 2: rules that fired**')
+                live = sorted([(F[j], j) for j in range(len(fz.rules)) if F[j] > 0], reverse=True)[:5]
+                if not live:
+                    st.markdown('No rule fired, so the score defaults to 50 (Moderate).')
+                for strength, j in live:
+                    ant_, c1 = fz.rules[j]
+                    st.markdown(f'<div class="fired"><div>{strength:.2f}</div><div>{rule_plain(ant_, c1)}'
+                                f'<div class="bar"><i style="width:{strength * 100:.0f}%;background:{COLORS[c1]}"></i></div></div></div>',
+                                unsafe_allow_html=True)
+                k1, k2, k3 = st.columns(3)
+                k1.metric('Low', f'{S[0]:.2f}'); k2.metric('Moderate', f'{S[1]:.2f}'); k3.metric('Severe', f'{S[2]:.2f}')
+                st.caption('The strongest rule of each class sets how high that class\'s output shape is allowed to rise.')
+            with rc:
+                st.markdown('**Stages 3 and 4: combine, then take the centroid**')
+                df_agg = pd.DataFrame({'score': z, 'membership': agg})
+                df_sets = pd.concat([pd.DataFrame({'score': z, 'membership': clip[c1], 'class': CLASS_NAMES[c1]}) for c1 in range(3)])
+                xs = alt.X('score:Q', scale=alt.Scale(domain=[0, 100]), title='risk score')
+                ys_ = alt.Y('membership:Q', scale=alt.Scale(domain=[0, 1]), title='degree')
+                area = alt.Chart(df_agg).mark_area(opacity=.35, color='#2B4C63').encode(x=xs, y=ys_)
+                lines = alt.Chart(df_sets).mark_line(strokeDash=[4, 3]).encode(
+                    x=xs, y=ys_, color=alt.Color('class:N', legend=alt.Legend(title=None, orient='bottom'),
+                                                 scale=alt.Scale(domain=CLASS_NAMES, range=[COLORS[0], COLORS[1], COLORS[2]])))
+                rule_ = alt.Chart(pd.DataFrame({'score': [score_]})).mark_rule(color='#E4572E', strokeWidth=3).encode(x=xs)
+                st.altair_chart(area + lines + rule_, height=230, width='stretch')
+                st.caption('The shaded area is the combined shape (MAX). The orange line is its balance point, the centroid.')
+
+            st.markdown(f'<div class="result" style="padding:1rem 1.4rem"><div class="label">Risk score {score_:.0f} out of 100, '
+                        f'so the band is <b style="color:{COLORS[band_]}">{CLASS_NAMES[band_]}</b></div>{band_html(score_)}</div>',
+                        unsafe_allow_html=True)
+
+            st.markdown('')
+            o1, o2 = st.columns(2, gap='large')
+            with o1:
+                st.markdown('**Output membership functions**')
+                st.dataframe(pd.DataFrame({'Output class': ['Low', 'Moderate', 'Severe'],
+                                           'Shape on the 0 to 100 score': ['Full from 0 to 15, falls to 0 at 40',
+                                                                           'Triangle: 25, 50, 75', 'Starts at 60, full from 85 to 100']}),
+                             hide_index=True, width='stretch')
+            with o2:
+                st.markdown('**Centroid formula**')
+                st.latex(r'Z^{*}=\frac{\int z\,\mu(z)\,dz}{\int \mu(z)\,dz}')
+                st.caption('Z* is the final risk score and μ(z) is the combined output shape. '
+                           f'Bands: 0 to {SCORE_CUTS[0]:.0f} Low, {SCORE_CUTS[0]:.0f} to {SCORE_CUTS[1]:.0f} Moderate, above {SCORE_CUTS[1]:.0f} Severe.')
+            st.markdown('<p class="note">On the Forecast tab, the headline class is the strongest rule vote and the score comes from this '
+                        'centroid. Close to a band boundary the two can differ by one step.</p>', unsafe_allow_html=True)
 
     # ------------------------------------------------------------------ stage 3
     else:
